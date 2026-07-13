@@ -32,7 +32,7 @@ Le jeu de données utilisé correspond aux colonnes classiques du dataset *AB_NY
 | `Affichages proprio` | Nombre d'annonces de l'hôte |
 | `Jours disponibles annuel` | Disponibilité sur 365 jours |
 
-Les fichiers de données (`airbnb.csv`, `nyc.jpg`) ne sont pas versionnés dans ce dépôt (voir `.gitignore`). Pour reproduire l'analyse, placez-les dans un dossier `fichiers/` à la racine du projet.
+Les fichiers de données (`Airbnb.csv`, `nyc.jpg`) ne sont pas versionnés dans ce dépôt (voir `.gitignore`). Pour reproduire l'analyse, placez-les dans un dossier `fichiers/` à la racine du projet.
 
 ## Installation
 
@@ -40,7 +40,7 @@ Les fichiers de données (`airbnb.csv`, `nyc.jpg`) ne sont pas versionnés dans 
 git clone <url-du-depot>
 cd <nom-du-depot>
 pip install -r requirements.txt
-jupyter notebook notebooks/Airbnb_NYC_analyse_et_prediction.ipynb
+jupyter notebook notebooks/analyse.ipynb
 ```
 
 ## Résultats clés
@@ -66,7 +66,7 @@ jupyter notebook notebooks/Airbnb_NYC_analyse_et_prediction.ipynb
 ├── notebooks/
 │   └── analyse.ipynb
 └── fichiers/              # données locales, non versionnées
-    ├── airbnb.csv
+    ├── Airbnb.csv
     └── nyc.jpg
 ```
 
