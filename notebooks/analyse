@@ -1,0 +1,939 @@
+{
+ "cells": [
+  {
+   "cell_type": "markdown",
+   "id": "84ade16c",
+   "metadata": {},
+   "source": [
+    "# Analyse et prédiction des prix Airbnb à New York\n",
+    "\n",
+    "**Objectif** : comprendre ce qui détermine le prix des annonces Airbnb à New York (arrondissement, type de logement, popularité, localisation) et construire un modèle simple capable de prédire ce prix à partir des caractéristiques d'une annonce.\n",
+    "\n",
+    "**Données** : jeu de données public *New York City Airbnb Open Data* (Inside Airbnb, 2019), avec colonnes traduites en français. Le notebook attend deux fichiers dans un sous-dossier `fichiers/` :\n",
+    "- `airbnb.csv` — les annonces (id, hôte, localisation, prix, avis, disponibilité...)\n",
+    "- `nyc.jpg` — un fond de carte de New York, utilisé pour la visualisation géographique\n",
+    "\n",
+    "**Plan** :\n",
+    "1. Exploration et nettoyage des données\n",
+    "2. Visualisation géographique et analyse des prix\n",
+    "3. Modélisation prédictive du prix (régression linéaire)\n",
+    "4. Conclusion et pistes d'amélioration"
+   ]
+  },
+  {
+   "cell_type": "markdown",
+   "id": "36f60091",
+   "metadata": {},
+   "source": [
+    "## 0. Import des librairies"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": null,
+   "id": "a09e2be0",
+   "metadata": {},
+   "outputs": [],
+   "source": [
+    "import numpy as np\n",
+    "import pandas as pd\n",
+    "import matplotlib.pyplot as plt\n",
+    "import seaborn as sns\n",
+    "from collections import Counter\n",
+    "\n",
+    "from sklearn.model_selection import train_test_split\n",
+    "from sklearn.impute import SimpleImputer\n",
+    "from sklearn.compose import ColumnTransformer\n",
+    "from sklearn.preprocessing import OneHotEncoder, RobustScaler\n",
+    "from sklearn.linear_model import LinearRegression\n",
+    "from sklearn.metrics import mean_absolute_error\n",
+    "\n",
+    "sns.set()\n",
+    "\n",
+    "TAILLE_FIGURE = 20\n",
+    "TAILLE_TITRE = 16\n",
+    "TAILLE_AXE = 14"
+   ]
+  },
+  {
+   "cell_type": "markdown",
+   "id": "6cce29a4",
+   "metadata": {},
+   "source": [
+    "## 1. Exploration et nettoyage des données"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": null,
+   "id": "786421a4",
+   "metadata": {},
+   "outputs": [],
+   "source": [
+    "airbnb = pd.read_csv(\"./fichiers/airbnb.csv\")\n",
+    "airbnb.head()"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": null,
+   "id": "ae9b0f5a",
+   "metadata": {},
+   "outputs": [],
+   "source": [
+    "airbnb.shape"
+   ]
+  },
+  {
+   "cell_type": "markdown",
+   "id": "2f941538",
+   "metadata": {},
+   "source": [
+    "### 1.1 Valeurs manquantes"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": null,
+   "id": "a6c84edc",
+   "metadata": {},
+   "outputs": [],
+   "source": [
+    "airbnb.isnull().sum()"
+   ]
+  },
+  {
+   "cell_type": "markdown",
+   "id": "11643137",
+   "metadata": {},
+   "source": [
+    "Deux colonnes, `Dernier avis` et `Avis par mois`, comptent exactement le même nombre de valeurs manquantes. Hypothèse : ce sont des annonces qui n'ont simplement jamais reçu d'avis. On vérifie en isolant les annonces dont `Nombre avis` vaut 0."
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": null,
+   "id": "9eb35463",
+   "metadata": {},
+   "outputs": [],
+   "source": [
+    "sans_avis = airbnb.loc[airbnb[\"Nombre avis\"] == 0]\n",
+    "sans_avis[[\"Dernier avis\", \"Avis par mois\"]].isnull().sum()"
+   ]
+  },
+  {
+   "cell_type": "markdown",
+   "id": "6f4403bd",
+   "metadata": {},
+   "source": [
+    "Confirmé : toutes les valeurs manquantes de ces deux colonnes correspondent à des annonces sans aucun avis — il n'y a pas de date de dernier avis ni de moyenne mensuelle à calculer s'il n'y a jamais eu d'avis."
+   ]
+  },
+  {
+   "cell_type": "markdown",
+   "id": "f1f2b899",
+   "metadata": {},
+   "source": [
+    "### 1.2 Propriétaires"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": null,
+   "id": "98a21384",
+   "metadata": {},
+   "outputs": [],
+   "source": [
+    "airbnb[\"ID proprio\"].nunique()"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": null,
+   "id": "f6fe166c",
+   "metadata": {},
+   "outputs": [],
+   "source": [
+    "proprietaire_frequent = airbnb[\"Nom proprio\"].mode()[0]\n",
+    "print(f\"Le prénom de propriétaire le plus fréquent est : {proprietaire_frequent}\")"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": null,
+   "id": "fa7bbd85",
+   "metadata": {},
+   "outputs": [],
+   "source": [
+    "nb_proprio_manquant = airbnb[\"Nom proprio\"].isnull().sum()\n",
+    "print(f\"{nb_proprio_manquant} annonces n'ont pas de nom de propriétaire renseigné\")"
+   ]
+  },
+  {
+   "cell_type": "markdown",
+   "id": "9e40ecec",
+   "metadata": {},
+   "source": [
+    "On regarde aussi la concentration de la propriété : quelle part des annonces est détenue par les 10 plus gros propriétaires ?"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": null,
+   "id": "9d79bd31",
+   "metadata": {},
+   "outputs": [],
+   "source": [
+    "listings_par_proprio = airbnb.groupby(\"ID proprio\").size().sort_values(ascending=False)\n",
+    "part_top10 = listings_par_proprio.head(10).sum() / listings_par_proprio.sum() * 100\n",
+    "print(f\"Les 10 plus gros propriétaires détiennent {part_top10:.2f}% des annonces\")"
+   ]
+  },
+  {
+   "cell_type": "markdown",
+   "id": "0943c693",
+   "metadata": {},
+   "source": [
+    "### 1.3 Prix par arrondissement et par type de logement"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": null,
+   "id": "30a7c308",
+   "metadata": {},
+   "outputs": [],
+   "source": [
+    "prix_median_arrondissement = airbnb.pivot_table(values=\"Prix\", index=\"Arrondissement\", aggfunc=\"median\")\n",
+    "prix_median_arrondissement"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": null,
+   "id": "01194a80",
+   "metadata": {},
+   "outputs": [],
+   "source": [
+    "prix_moyen_type = airbnb.groupby(\"Type\")[\"Prix\"].mean().round(2)\n",
+    "prix_moyen_type"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": null,
+   "id": "ca4e6595",
+   "metadata": {},
+   "outputs": [],
+   "source": [
+    "airbnb.loc[\n",
+    "    (airbnb[\"Nombre avis\"] > 100) & (airbnb[\"Arrondissement\"] == \"Brooklyn\"), \"Prix\"\n",
+    "].mean().round(2)"
+   ]
+  },
+  {
+   "cell_type": "markdown",
+   "id": "1db2258d",
+   "metadata": {},
+   "source": [
+    "### 1.4 Quartiers les moins chers en moyenne"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": null,
+   "id": "8655b3c5",
+   "metadata": {},
+   "outputs": [],
+   "source": [
+    "airbnb.groupby(\"Quartier\")[\"Prix\"].mean().sort_values().head(3).round(2)"
+   ]
+  },
+  {
+   "cell_type": "markdown",
+   "id": "c4b84f7f",
+   "metadata": {},
+   "source": [
+    "### 1.5 Contraintes de réservation"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": null,
+   "id": "3630c0c4",
+   "metadata": {},
+   "outputs": [],
+   "source": [
+    "nb_min_365 = (airbnb[\"Minimum nuits\"] == 365).sum()\n",
+    "print(f\"{nb_min_365} annonces exigent un minimum de 365 nuits de réservation\")"
+   ]
+  },
+  {
+   "cell_type": "markdown",
+   "id": "e658b83e",
+   "metadata": {},
+   "source": [
+    "### 1.6 Avis par quartier et arrondissement"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": null,
+   "id": "d9924bc7",
+   "metadata": {},
+   "outputs": [],
+   "source": [
+    "avis_par_quartier = (\n",
+    "    airbnb.groupby([\"Arrondissement\", \"Quartier\"])[\"Nombre avis\"]\n",
+    "    .sum()\n",
+    "    .sort_values(ascending=False)\n",
+    ")\n",
+    "avis_par_quartier.head(1)"
+   ]
+  },
+  {
+   "cell_type": "markdown",
+   "id": "0fcd226e",
+   "metadata": {},
+   "source": [
+    "### 1.7 Chambres partagées par arrondissement"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": null,
+   "id": "a49a8675",
+   "metadata": {},
+   "outputs": [],
+   "source": [
+    "repartition_type = airbnb.groupby([\"Arrondissement\", \"Type\"]).size().unstack(fill_value=0)\n",
+    "taux_shared = repartition_type[\"Shared room\"] / repartition_type.sum(axis=1) * 100\n",
+    "\n",
+    "print(\n",
+    "    f\"L'arrondissement avec le taux le plus élevé de chambres partagées est \"\n",
+    "    f\"{taux_shared.idxmax()} ({taux_shared.max():.2f}% des annonces)\"\n",
+    ")\n",
+    "taux_shared.sort_values(ascending=False)"
+   ]
+  },
+  {
+   "cell_type": "markdown",
+   "id": "22c936e5",
+   "metadata": {},
+   "source": [
+    "### 1.8 Prix moyen selon la popularité (nombre d'avis)"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": null,
+   "id": "0852e38d",
+   "metadata": {},
+   "outputs": [],
+   "source": [
+    "bornes_avis = [0, 100, 200, np.inf]\n",
+    "labels_avis = [\"< 100 avis\", \"100-200 avis\", \"> 200 avis\"]\n",
+    "airbnb[\"Catégorie avis\"] = pd.cut(airbnb[\"Nombre avis\"], bins=bornes_avis, labels=labels_avis, right=False)\n",
+    "\n",
+    "airbnb.groupby([\"Arrondissement\", \"Catégorie avis\"])[\"Prix\"].mean().round(2)"
+   ]
+  },
+  {
+   "cell_type": "markdown",
+   "id": "b18c2efc",
+   "metadata": {},
+   "source": [
+    "Tendance claire : plus une annonce a d'avis (donc plus elle est ancienne / populaire), plus son prix moyen est bas — probablement un effet d'ajustement des hôtes vers des prix plus compétitifs au fil du temps."
+   ]
+  },
+  {
+   "cell_type": "markdown",
+   "id": "9141fe4e",
+   "metadata": {},
+   "source": [
+    "### 1.9 Ancienneté des annonces"
+   ]
+  },
+  {
+   "cell_type": "markdown",
+   "id": "642405f7",
+   "metadata": {},
+   "source": [
+    "En excluant les lignes avec valeurs manquantes, on approxime le nombre de mois d'activité d'une annonce par `Nombre avis / Avis par mois`, puis on regarde la part d'annonces actives depuis moins d'un an, par arrondissement."
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": null,
+   "id": "d10a1766",
+   "metadata": {},
+   "outputs": [],
+   "source": [
+    "airbnb_complet = airbnb.dropna().copy()\n",
+    "airbnb_complet[\"Mois actif\"] = airbnb_complet[\"Nombre avis\"] / airbnb_complet[\"Avis par mois\"]\n",
+    "\n",
+    "recentes = airbnb_complet[\"Mois actif\"] < 12\n",
+    "proportion_recentes = (\n",
+    "    airbnb_complet[recentes].groupby(\"Arrondissement\").size()\n",
+    "    / airbnb_complet.groupby(\"Arrondissement\").size()\n",
+    "    * 100\n",
+    ").sort_values(ascending=False)\n",
+    "\n",
+    "proportion_recentes"
+   ]
+  },
+  {
+   "cell_type": "markdown",
+   "id": "ce0e3e35",
+   "metadata": {},
+   "source": [
+    "### 1.10 Bonus — mots les plus fréquents dans les titres d'annonces"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": null,
+   "id": "42c5d0db",
+   "metadata": {},
+   "outputs": [],
+   "source": [
+    "mots = Counter(\" \".join(airbnb_complet[\"Nom\"].str.lower()).split())\n",
+    "mots.most_common(5)"
+   ]
+  },
+  {
+   "cell_type": "markdown",
+   "id": "3d34a372",
+   "metadata": {},
+   "source": [
+    "## 2. Visualisation géographique et analyse des prix"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": null,
+   "id": "ebd7cac9",
+   "metadata": {},
+   "outputs": [],
+   "source": [
+    "df = airbnb.copy()\n",
+    "bornes_coord = [df[\"Longitude\"].min(), df[\"Longitude\"].max(), df[\"Latitude\"].min(), df[\"Latitude\"].max()]\n",
+    "carte = plt.imread(\"./fichiers/nyc.jpg\")"
+   ]
+  },
+  {
+   "cell_type": "markdown",
+   "id": "f267aa81",
+   "metadata": {},
+   "source": [
+    "On isole les annonces ayant un dernier avis daté, pour en extraire l'année et le mois — un proxy de la période de location."
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": null,
+   "id": "5493a98c",
+   "metadata": {},
+   "outputs": [],
+   "source": [
+    "df_dates = df.dropna(subset=[\"Dernier avis\"]).copy()\n",
+    "df_dates[\"Dernier avis\"] = pd.to_datetime(df_dates[\"Dernier avis\"])\n",
+    "df_dates[\"Année\"] = df_dates[\"Dernier avis\"].dt.year.astype(str)\n",
+    "df_dates[\"Mois\"] = df_dates[\"Dernier avis\"].dt.month"
+   ]
+  },
+  {
+   "cell_type": "markdown",
+   "id": "b4fc32ca",
+   "metadata": {},
+   "source": [
+    "### 2.1 Répartition géographique des annonces"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": null,
+   "id": "6e26bc35",
+   "metadata": {},
+   "outputs": [],
+   "source": [
+    "arrondissements = [\"Manhattan\", \"Brooklyn\", \"Bronx\", \"Queens\", \"Staten Island\"]\n",
+    "couleurs = [\"red\", \"green\", \"blue\", \"purple\", \"orange\"]\n",
+    "\n",
+    "fig, ax = plt.subplots(figsize=(8, 8))\n",
+    "ax.imshow(carte, extent=bornes_coord, aspect=\"equal\")\n",
+    "for arr, couleur in zip(arrondissements, couleurs):\n",
+    "    sous_df = df[df[\"Arrondissement\"] == arr]\n",
+    "    ax.scatter(sous_df[\"Longitude\"], sous_df[\"Latitude\"], alpha=0.1, color=couleur, s=10, label=arr)\n",
+    "\n",
+    "ax.set_xlim(bornes_coord[0], bornes_coord[1])\n",
+    "ax.set_ylim(bornes_coord[2], bornes_coord[3])\n",
+    "ax.set_title(\"Répartition géographique des annonces Airbnb à New York\")\n",
+    "ax.legend(markerscale=5);"
+   ]
+  },
+  {
+   "cell_type": "markdown",
+   "id": "5fae2140",
+   "metadata": {},
+   "source": [
+    "### 2.2 Part des annonces par arrondissement"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": null,
+   "id": "ab7c327f",
+   "metadata": {},
+   "outputs": [],
+   "source": [
+    "nb_par_arrondissement = df[\"Arrondissement\"].value_counts()\n",
+    "\n",
+    "fig, ax = plt.subplots(figsize=(8, 8))\n",
+    "ax.pie(nb_par_arrondissement, labels=nb_par_arrondissement.index, colors=couleurs, shadow=True, autopct=\"%1.2f%%\")\n",
+    "ax.set_title(\"Répartition des annonces par arrondissement\");"
+   ]
+  },
+  {
+   "cell_type": "markdown",
+   "id": "746ef866",
+   "metadata": {},
+   "source": [
+    "### 2.3 Distribution des prix par arrondissement et par type de logement"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": null,
+   "id": "159df093",
+   "metadata": {},
+   "outputs": [],
+   "source": [
+    "fig, ax = plt.subplots(figsize=(8, 8))\n",
+    "sns.boxplot(x=\"Arrondissement\", y=\"Prix\", data=df, ax=ax)\n",
+    "ax.set_title(\"Distribution des prix par arrondissement\")\n",
+    "ax.set_xlabel(\"Arrondissement\", fontsize=TAILLE_AXE)\n",
+    "ax.set_ylabel(\"Prix ($)\", fontsize=TAILLE_AXE);"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": null,
+   "id": "ea18d5f1",
+   "metadata": {},
+   "outputs": [],
+   "source": [
+    "prix_median_type_arr = df.pivot_table(\"Prix\", index=\"Arrondissement\", columns=\"Type\", aggfunc=\"median\", fill_value=0)\n",
+    "\n",
+    "fig, ax = plt.subplots(figsize=(10, 7))\n",
+    "prix_median_type_arr.T.plot.bar(ax=ax)\n",
+    "ax.set_title(\"Prix médian par type de logement et arrondissement\", fontsize=TAILLE_TITRE)\n",
+    "ax.set_xlabel(\"Type de logement\", fontsize=TAILLE_AXE)\n",
+    "ax.set_ylabel(\"Prix médian ($)\", fontsize=TAILLE_AXE)\n",
+    "ax.set_xticklabels(ax.get_xticklabels(), rotation=0, horizontalalignment=\"center\");"
+   ]
+  },
+  {
+   "cell_type": "markdown",
+   "id": "503a6068",
+   "metadata": {},
+   "source": [
+    "Manhattan se distingue nettement des autres arrondissements, quel que soit le type de logement — cohérent avec son statut de quartier d'affaires et touristique central."
+   ]
+  },
+  {
+   "cell_type": "markdown",
+   "id": "e1eca0cf",
+   "metadata": {},
+   "source": [
+    "### 2.4 Distribution des prix par type de logement"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": null,
+   "id": "fe005aa3",
+   "metadata": {},
+   "outputs": [],
+   "source": [
+    "fig, ax = plt.subplots(figsize=(12, 6))\n",
+    "for type_logement, couleur in zip([\"Entire home/apt\", \"Private room\", \"Shared room\"], [\"blue\", \"red\", \"green\"]):\n",
+    "    df[(df[\"Prix\"] < 400) & (df[\"Type\"] == type_logement)][\"Prix\"].hist(\n",
+    "        bins=100, color=couleur, label=type_logement, ax=ax\n",
+    "    )\n",
+    "\n",
+    "ax.set_title(\"Distribution des prix par type de logement (annonces < 400$)\", fontsize=TAILLE_TITRE)\n",
+    "ax.set_xlabel(\"Prix ($)\", fontsize=TAILLE_AXE)\n",
+    "ax.set_ylabel(\"Nombre d'annonces\", fontsize=TAILLE_AXE)\n",
+    "ax.legend();"
+   ]
+  },
+  {
+   "cell_type": "markdown",
+   "id": "39a9232f",
+   "metadata": {},
+   "source": [
+    "On observe des pics réguliers (multiples de 25$ ou 50$) — les hôtes ont tendance à fixer des prix ronds plutôt que des prix optimisés au dollar près."
+   ]
+  },
+  {
+   "cell_type": "markdown",
+   "id": "a5d100c4",
+   "metadata": {},
+   "source": [
+    "### 2.5 Évolution temporelle du nombre d'annonces et du prix médian"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": null,
+   "id": "299af89a",
+   "metadata": {},
+   "outputs": [],
+   "source": [
+    "nb_par_annee = df_dates.pivot_table(\"Prix\", index=\"Année\", columns=\"Arrondissement\", aggfunc=\"count\", fill_value=0)\n",
+    "prix_median_par_annee = df_dates.pivot_table(\"Prix\", index=\"Année\", columns=\"Arrondissement\", aggfunc=\"median\", fill_value=0)\n",
+    "nb_par_mois = df_dates.pivot_table(\"Prix\", index=\"Mois\", columns=\"Arrondissement\", aggfunc=\"count\", fill_value=0)\n",
+    "prix_median_par_mois = df_dates.pivot_table(\"Prix\", index=\"Mois\", columns=\"Arrondissement\", aggfunc=\"median\", fill_value=0)\n",
+    "\n",
+    "fig, axes = plt.subplots(2, 2, figsize=(20, 14))\n",
+    "sns.lineplot(data=nb_par_annee, marker=\"o\", ax=axes[0][0])\n",
+    "sns.lineplot(data=prix_median_par_annee, marker=\"o\", ax=axes[0][1])\n",
+    "sns.lineplot(data=nb_par_mois, marker=\"o\", ax=axes[1][0])\n",
+    "sns.lineplot(data=prix_median_par_mois, marker=\"o\", ax=axes[1][1])\n",
+    "\n",
+    "axes[0][0].set(title=\"Nombre d'annonces par année (proxy : date du dernier avis)\", xlabel=\"Année\", ylabel=\"Nombre d'annonces\")\n",
+    "axes[0][1].set(title=\"Prix médian par année\", xlabel=\"Année\", ylabel=\"Prix médian ($)\")\n",
+    "axes[1][0].set(title=\"Nombre d'annonces par mois\", xlabel=\"Mois\", ylabel=\"Nombre d'annonces\")\n",
+    "axes[1][1].set(title=\"Prix médian par mois\", xlabel=\"Mois\", ylabel=\"Prix médian ($)\")\n",
+    "fig.suptitle(\"Évolution temporelle des annonces et des prix\", fontsize=TAILLE_FIGURE);"
+   ]
+  },
+  {
+   "cell_type": "markdown",
+   "id": "8034951b",
+   "metadata": {},
+   "source": [
+    "Deux constats principaux :\n",
+    "- Forte croissance du nombre d'annonces entre 2017 et 2019, cohérente avec l'essor de la plateforme.\n",
+    "- Le prix médian reste globalement stable sur la même période — la croissance de l'offre ne semble pas avoir fait pression sur les prix.\n",
+    "\n",
+    "Attention à un biais de sélection : la courbe de Staten Island en 2015 repose sur un échantillon de seulement 4 annonces, ce qui la rend peu fiable pour cette année-là."
+   ]
+  },
+  {
+   "cell_type": "markdown",
+   "id": "a5f53ea8",
+   "metadata": {},
+   "source": [
+    "### 2.6 Durée minimale de réservation exigée"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": null,
+   "id": "4e2241ac",
+   "metadata": {},
+   "outputs": [],
+   "source": [
+    "bornes_nuits = [0, 1, 2, 6, 13, np.inf]\n",
+    "labels_nuits = [\"1 nuit\", \"2 nuits\", \"3 à 6 nuits\", \"7 à 13 nuits\", \"14 nuits et +\"]\n",
+    "df[\"Catégorie nuits\"] = pd.cut(df[\"Minimum nuits\"], bins=bornes_nuits, labels=labels_nuits)\n",
+    "\n",
+    "fig, ax = plt.subplots(figsize=(12, 8))\n",
+    "graphe = sns.countplot(x=df[\"Catégorie nuits\"], order=labels_nuits, ax=ax)\n",
+    "ax.set_title(\"Nombre d'annonces selon le minimum de nuits requis\")\n",
+    "ax.set_xlabel(\"Minimum de nuits\")\n",
+    "ax.set_ylabel(\"Nombre d'annonces\")\n",
+    "\n",
+    "for p in graphe.patches:\n",
+    "    hauteur = p.get_height()\n",
+    "    graphe.text(p.get_x() + p.get_width() / 2, hauteur, f\"{int(hauteur)}\", ha=\"center\", va=\"bottom\")"
+   ]
+  },
+  {
+   "cell_type": "markdown",
+   "id": "da42ddf2",
+   "metadata": {},
+   "source": [
+    "### 2.7 Distance aux grands parcs (feature engineering géospatial)"
+   ]
+  },
+  {
+   "cell_type": "markdown",
+   "id": "1f1dac81",
+   "metadata": {},
+   "source": [
+    "On calcule la distance (en km) entre chaque annonce et deux points de référence — Central Park et Prospect Park — via la formule de Haversine, pour voir si la proximité d'un grand parc influence le prix."
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": null,
+   "id": "58d0459b",
+   "metadata": {},
+   "outputs": [],
+   "source": [
+    "def distance_haversine(lat1, lon1, lat2, lon2):\n",
+    "    \"\"\"Distance approximative en km entre deux points GPS.\"\"\"\n",
+    "    return np.arccos(\n",
+    "        np.sin(np.radians(lat1)) * np.sin(np.radians(lat2))\n",
+    "        + np.cos(np.radians(lat1)) * np.cos(np.radians(lat2)) * np.cos(np.radians(lon1 - lon2))\n",
+    "    ) * 6371\n",
+    "\n",
+    "\n",
+    "lat_central_park, lon_central_park = 40.785091, -73.968285\n",
+    "lat_prospect_park, lon_prospect_park = 40.665535, -73.969749\n",
+    "\n",
+    "df[\"Distance Central Park\"] = distance_haversine(\n",
+    "    lat_central_park, lon_central_park, df[\"Latitude\"], df[\"Longitude\"]\n",
+    ").round(4)\n",
+    "df[\"Distance Prospect Park\"] = distance_haversine(\n",
+    "    lat_prospect_park, lon_prospect_park, df[\"Latitude\"], df[\"Longitude\"]\n",
+    ").round(4)"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": null,
+   "id": "9ea37fe4",
+   "metadata": {},
+   "outputs": [],
+   "source": [
+    "manhattan_proche_cp = df[(df[\"Arrondissement\"] == \"Manhattan\") & (df[\"Prix\"] < 300)]\n",
+    "\n",
+    "fig, ax = plt.subplots(figsize=(10, 10))\n",
+    "sns.scatterplot(x=\"Distance Central Park\", y=\"Prix\", data=manhattan_proche_cp, ax=ax)\n",
+    "ax.set_title(\"Prix des annonces à Manhattan selon la distance à Central Park\");"
+   ]
+  },
+  {
+   "cell_type": "markdown",
+   "id": "b277f3d8",
+   "metadata": {},
+   "source": [
+    "## 3. Modélisation prédictive du prix\n",
+    "\n",
+    "Objectif : prédire le `Prix` d'une annonce à partir de son type de logement, son arrondissement, ses contraintes de réservation et sa popularité — sans utiliser d'information géographique fine (quartier, latitude/longitude) ni de texte, pour garder un modèle simple et généralisable."
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": null,
+   "id": "adbdb257",
+   "metadata": {},
+   "outputs": [],
+   "source": [
+    "df[\"Mois actif\"] = df[\"Nombre avis\"] / df[\"Avis par mois\"]\n",
+    "\n",
+    "variables_explicatives = [\"Type\", \"Arrondissement\", \"Minimum nuits\", \"Nombre avis\", \"Jours disponibles annuel\", \"Mois actif\"]\n",
+    "X = df[variables_explicatives]\n",
+    "y = df[\"Prix\"]\n",
+    "\n",
+    "variables_num = list(X.select_dtypes(exclude=[\"object\"]))\n",
+    "variables_cat = list(X.select_dtypes(include=[\"object\"]))\n",
+    "\n",
+    "X_train, X_val, y_train, y_val = train_test_split(X, y, test_size=0.25, random_state=1)\n",
+    "print(f\"Entraînement : {X_train.shape}, Validation : {X_val.shape}\")"
+   ]
+  },
+  {
+   "cell_type": "markdown",
+   "id": "d8c87a18",
+   "metadata": {},
+   "source": [
+    "### 3.1 Imputation, encodage et standardisation"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": null,
+   "id": "ecd301d4",
+   "metadata": {},
+   "outputs": [],
+   "source": [
+    "index_train, index_val = X_train.index, X_val.index\n",
+    "\n",
+    "# Imputation des variables numériques (médiane) et catégorielles (mode), calibrée sur l'entraînement uniquement\n",
+    "imp_num = SimpleImputer(strategy=\"median\").fit(X_train[variables_num])\n",
+    "X_train_num = pd.DataFrame(imp_num.transform(X_train[variables_num]), columns=variables_num, index=index_train)\n",
+    "X_val_num = pd.DataFrame(imp_num.transform(X_val[variables_num]), columns=variables_num, index=index_val)\n",
+    "\n",
+    "imp_cat = SimpleImputer(strategy=\"most_frequent\").fit(X_train[variables_cat])\n",
+    "X_train_cat = pd.DataFrame(imp_cat.transform(X_train[variables_cat]), columns=variables_cat, index=index_train)\n",
+    "X_val_cat = pd.DataFrame(imp_cat.transform(X_val[variables_cat]), columns=variables_cat, index=index_val)\n",
+    "\n",
+    "X_train = pd.concat([X_train_num, X_train_cat], axis=1)\n",
+    "X_val = pd.concat([X_val_num, X_val_cat], axis=1)"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": null,
+   "id": "42cce5a5",
+   "metadata": {},
+   "outputs": [],
+   "source": [
+    "# Encodage one-hot des variables catégorielles\n",
+    "encodeur = ColumnTransformer(\n",
+    "    transformers=[(\"encoder\", OneHotEncoder(drop=\"first\"), variables_cat)],\n",
+    "    remainder=\"passthrough\",\n",
+    ")\n",
+    "X_train = pd.DataFrame(encodeur.fit_transform(X_train), columns=encodeur.get_feature_names_out(), index=index_train)\n",
+    "X_val = pd.DataFrame(encodeur.transform(X_val), columns=encodeur.get_feature_names_out(), index=index_val)\n",
+    "\n",
+    "colonnes_encodees = X_train.columns\n",
+    "\n",
+    "# Standardisation robuste (moins sensible aux valeurs extrêmes que StandardScaler)\n",
+    "standardiseur = RobustScaler().fit(X_train)\n",
+    "X_train = pd.DataFrame(standardiseur.transform(X_train), columns=colonnes_encodees, index=index_train)\n",
+    "X_val = pd.DataFrame(standardiseur.transform(X_val), columns=colonnes_encodees, index=index_val)"
+   ]
+  },
+  {
+   "cell_type": "markdown",
+   "id": "bda62877",
+   "metadata": {},
+   "source": [
+    "### 3.2 Analyse des corrélations"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": null,
+   "id": "fe98ca88",
+   "metadata": {},
+   "outputs": [],
+   "source": [
+    "train = pd.concat([X_train, y_train], axis=1)\n",
+    "corr_matrix = train.corr().abs()\n",
+    "np.fill_diagonal(corr_matrix.values, 0)\n",
+    "\n",
+    "fig, ax = plt.subplots(figsize=(12, 12))\n",
+    "sns.heatmap(corr_matrix, ax=ax)\n",
+    "ax.set_title(\"Matrice de corrélation des variables\");"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": null,
+   "id": "347c7346",
+   "metadata": {},
+   "outputs": [],
+   "source": [
+    "colonnes_correlees = [col for col in corr_matrix.columns if any(corr_matrix[col] > 0.6)]\n",
+    "print(f\"{len(colonnes_correlees)} colonne(s) avec une corrélation > 0.6 avec au moins une autre variable : {colonnes_correlees}\")"
+   ]
+  },
+  {
+   "cell_type": "markdown",
+   "id": "071c574c",
+   "metadata": {},
+   "source": [
+    "Sans surprise, les indicatrices d'un même arrondissement sont corrélées entre elles (encodage one-hot). On retire l'une des colonnes redondantes pour limiter la colinéarité et on compare les deux versions du modèle."
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": null,
+   "id": "c3094423",
+   "metadata": {},
+   "outputs": [],
+   "source": [
+    "colonnes_a_retirer = [c for c in colonnes_correlees if \"Brooklyn\" in c]\n",
+    "X_train_corr = X_train.drop(columns=colonnes_a_retirer)\n",
+    "X_val_corr = X_val.drop(columns=colonnes_a_retirer)\n",
+    "print(f\"Colonne(s) retirée(s) : {colonnes_a_retirer}\")"
+   ]
+  },
+  {
+   "cell_type": "markdown",
+   "id": "ff232b80",
+   "metadata": {},
+   "source": [
+    "### 3.3 Entraînement et comparaison des modèles"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": null,
+   "id": "eb17c192",
+   "metadata": {},
+   "outputs": [],
+   "source": [
+    "modele_complet = LinearRegression().fit(X_train, y_train)\n",
+    "modele_reduit = LinearRegression().fit(X_train_corr, y_train)\n",
+    "\n",
+    "y_pred_complet = modele_complet.predict(X_val)\n",
+    "y_pred_reduit = modele_reduit.predict(X_val_corr)\n",
+    "\n",
+    "mae_complet = mean_absolute_error(y_val, y_pred_complet)\n",
+    "mae_reduit = mean_absolute_error(y_val, y_pred_reduit)\n",
+    "\n",
+    "print(f\"Erreur absolue moyenne (MAE) - modèle complet         : {mae_complet:.2f} $\")\n",
+    "print(f\"Erreur absolue moyenne (MAE) - modèle sans colinéarité : {mae_reduit:.2f} $\")"
+   ]
+  },
+  {
+   "cell_type": "markdown",
+   "id": "8a7a0de3",
+   "metadata": {},
+   "source": [
+    "La MAE se lit en dollars : c'est l'écart moyen, en valeur absolue, entre le prix prédit et le prix réel d'une annonce."
+   ]
+  },
+  {
+   "cell_type": "markdown",
+   "id": "6037e5de",
+   "metadata": {},
+   "source": [
+    "### 3.4 Analyse des écarts de prédiction"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": null,
+   "id": "dc6b70fd",
+   "metadata": {},
+   "outputs": [],
+   "source": [
+    "resultats = pd.DataFrame({\"Prix réel\": y_val, \"Prix prédit\": y_pred_reduit})\n",
+    "resultats[\"Écart relatif\"] = (resultats[\"Prix prédit\"] - resultats[\"Prix réel\"]) / resultats[\"Prix réel\"]\n",
+    "resultats.sort_values(\"Écart relatif\", ascending=False).head(10)"
+   ]
+  },
+  {
+   "cell_type": "markdown",
+   "id": "8b572a42",
+   "metadata": {},
+   "source": [
+    "## 4. Conclusion et pistes d'amélioration\n",
+    "\n",
+    "**Principaux constats** :\n",
+    "- Le prix d'une annonce Airbnb à New York dépend fortement de l'arrondissement (Manhattan très au-dessus du reste) et du type de logement (logement entier > chambre privée > chambre partagée).\n",
+    "- La popularité (nombre d'avis) est associée à des prix plus bas, ce qui suggère un ajustement des hôtes vers des prix plus compétitifs avec le temps.\n",
+    "- Le marché a connu une forte croissance en nombre d'annonces entre 2017 et 2019 sans hausse correspondante du prix médian.\n",
+    "- Un modèle de régression linéaire simple, basé uniquement sur le type de logement, l'arrondissement, la disponibilité et la popularité, permet déjà de capturer une partie du signal, mais laisse une marge d'erreur significative — attendue étant donné l'absence de variables comme la taille du logement ou les équipements.\n",
+    "\n",
+    "**Pistes d'amélioration** :\n",
+    "- Transformer `Prix` (log) pour réduire l'asymétrie de sa distribution avant modélisation.\n",
+    "- Tester des modèles non linéaires (Random Forest, Gradient Boosting) capables de capter des interactions entre variables.\n",
+    "- Exploiter la localisation précise (quartier, distance aux points d'intérêt) plutôt que le seul arrondissement.\n",
+    "- Valider les résultats par validation croisée plutôt qu'un split unique train/validation."
+   ]
+  }
+ ],
+ "metadata": {
+  "kernelspec": {
+   "display_name": "Python 3",
+   "language": "python",
+   "name": "python3"
+  },
+  "language_info": {
+   "name": "python",
+   "version": "3.10"
+  }
+ },
+ "nbformat": 4,
+ "nbformat_minor": 5
+}
