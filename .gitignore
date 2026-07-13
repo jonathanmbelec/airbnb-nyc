@@ -1,0 +1,17 @@
+# Données brutes (voir README pour la source, à ajouter localement dans fichiers/)
+fichiers/*.csv
+fichiers/*.jpg
+ 
+# Jupyter
+.ipynb_checkpoints/
+ 
+# Python
+__pycache__/
+*.pyc
+.venv/
+venv/
+env/
+ 
+# OS
+.DS_Store
+Thumbs.db
