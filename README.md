@@ -8,7 +8,7 @@ Comprendre ce qui détermine le prix d'une annonce (arrondissement, type de loge
 
 ## Contenu
 
-Le notebook [`notebooks/analyse.ipynb`](notebooks/analyse) couvre :
+Le notebook [`notebooks/analyse.ipynb`](notebooks/analyse.ipynb) couvre :
 
 1. **Exploration et nettoyage des données** — valeurs manquantes, propriétaires, prix par arrondissement/type/quartier, popularité, ancienneté des annonces.
 2. **Visualisation géographique et analyse des prix** — répartition spatiale des annonces, distribution des prix, évolution temporelle, distance aux grands parcs (feature engineering géospatial via la formule de Haversine).
