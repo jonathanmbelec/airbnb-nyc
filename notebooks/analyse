@@ -70,7 +70,7 @@
    "metadata": {},
    "outputs": [],
    "source": [
-    "airbnb = pd.read_csv(\"./fichiers/airbnb.csv\")\n",
+    "airbnb = pd.read_csv(\"./fichiers/Airbnb.csv\")\n",
     "airbnb.head()"
    ]
   },
